@@ -1,36 +1,81 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# GHZ-NDS — gRPC Load Testing UI
 
-## Getting Started
+Web-based UI untuk menjalankan gRPC load test menggunakan `@grpc/grpc-js`. Upload file `.proto`, konfigurasikan parameter test (concurrency, jumlah request, data), dan lihat hasilnya langsung di browser.
 
-First, run the development server:
+![Next.js](https://img.shields.io/badge/Next.js-16-black) ![Docker](https://img.shields.io/badge/Docker-ready-blue) ![gRPC](https://img.shields.io/badge/gRPC-load%20test-green)
+
+---
+
+## Quick Start (Docker)
+
+Cara paling cepat tanpa perlu clone repo atau install dependencies:
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+docker run -p 3000:3000 ghcr.io/andrianns/ghz-nds
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Buka **http://localhost:3000** di browser.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### Target Address
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+| OS    | Target Address untuk gRPC server lokal         |
+| ----- | ---------------------------------------------- |
+| macOS | `host.docker.internal:PORT`                    |
+| Linux | Gunakan `--network host` lalu `localhost:PORT` |
 
-## Learn More
+**Contoh Linux:**
 
-To learn more about Next.js, take a look at the following resources:
+```bash
+docker run --network host ghcr.io/andrianns/ghz-nds
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+### Update ke versi terbaru
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```bash
+docker pull ghcr.io/andrianns/ghz-nds:latest
+docker run -p 3000:3000 ghcr.io/andrianns/ghz-nds
+```
 
-## Deploy on Vercel
+---
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Development (Local)
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```bash
+git clone https://github.com/Andrianns/ghz-nds.git
+cd ghz-nds
+npm install
+npm run dev
+```
+
+Buka **http://localhost:3000**. Target address bisa langsung pakai `localhost:PORT`.
+
+---
+
+## Build & Push Docker Image
+
+```bash
+docker build -t ghcr.io/andrianns/ghz-nds:latest .
+docker push ghcr.io/andrianns/ghz-nds:latest
+```
+
+---
+
+## Cara Pakai
+
+1. **Upload/paste file `.proto`** di panel kiri
+2. **Pilih service dan method** yang mau di-test
+3. **Isi target address** gRPC server (contoh: `localhost:8081` atau `host.docker.internal:8081`)
+4. **Konfigurasi step** — atur concurrency (`c`) dan jumlah request (`n`)
+5. **Isi request data** dalam format JSON
+6. **Klik Run** dan lihat hasilnya
+
+---
+
+## Tech Stack
+
+- **Next.js 16** — Frontend + API routes
+- **@grpc/grpc-js** — gRPC client untuk load testing
+- **@grpc/proto-loader** — Parse file `.proto`
+- **Tailwind CSS** — Styling
+- **Framer Motion** — Animasi
+- **html2canvas** — Export hasil sebagai gambar

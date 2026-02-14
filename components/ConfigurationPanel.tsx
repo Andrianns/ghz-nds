@@ -23,11 +23,12 @@ interface ConfigurationPanelProps {
   setMetadata: (metadata: string) => void;
   metadataEnabled: boolean;
   setMetadataEnabled: (enabled: boolean) => void;
+  hasValidProto: boolean;
 }
 
 export const ConfigurationPanel: React.FC<ConfigurationPanelProps> = ({
   steps, setSteps, onRun, isRunning, targetAddress, setTargetAddress, serviceMethod,
-  selectedService, selectedMethod, metadata, setMetadata, metadataEnabled, setMetadataEnabled
+  selectedService, selectedMethod, metadata, setMetadata, metadataEnabled, setMetadataEnabled, hasValidProto
 }) => {
 
   const addStep = () => {
@@ -63,17 +64,18 @@ export const ConfigurationPanel: React.FC<ConfigurationPanelProps> = ({
       <div className="mb-6 bg-gray-900/50 p-4 rounded-lg border border-gray-700">
         <div className="flex items-center justify-between mb-1">
           <label className="block text-xs text-gray-400">Metadata (-m)</label>
-          <label className="flex items-center gap-2 cursor-pointer">
-            <span className="text-xs text-gray-400">{metadataEnabled ? 'On' : 'Off'}</span>
+          <label className={`flex items-center gap-2 ${hasValidProto ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'}`}>
+            <span className="text-xs text-gray-400">{!hasValidProto ? 'No Proto' : metadataEnabled ? 'On' : 'Off'}</span>
             <input
               type="checkbox"
               checked={metadataEnabled}
               onChange={(e) => setMetadataEnabled(e.target.checked)}
-              className="w-4 h-4 accent-purple-500 cursor-pointer"
+              disabled={!hasValidProto}
+              className="w-4 h-4 accent-purple-500 cursor-pointer disabled:cursor-not-allowed"
             />
           </label>
         </div>
-        {metadataEnabled && (
+        {metadataEnabled && hasValidProto && (
           <textarea
             value={metadata}
             onChange={(e) => setMetadata(e.target.value)}

@@ -225,14 +225,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(result);
 
   } catch (error: any) {
-    console.error('API Error:', error);
+    console.error('API Error: - route.ts:228', error);
     return NextResponse.json({ error: error.message || 'Internal Server Error' }, { status: 500 });
   } finally {
     if (tempDir) {
       try {
         await fs.rm(tempDir, { recursive: true, force: true });
       } catch (e) {
-        console.error('Failed to clean up temp dir:', e);
+        console.error('Failed to clean up temp dir: - route.ts:235', e);
       }
     }
   }
