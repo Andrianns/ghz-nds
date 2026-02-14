@@ -1,0 +1,155 @@
+
+import React, { useState } from 'react';
+import { Plus, Trash2, Play, Settings } from 'lucide-react';
+
+export interface TestStep {
+  id: string;
+  c: number;
+  n: number;
+  data: string; // JSON string
+}
+
+interface ConfigurationPanelProps {
+  steps: TestStep[];
+  setSteps: React.Dispatch<React.SetStateAction<TestStep[]>>;
+  onRun: () => void;
+  isRunning: boolean;
+  targetAddress: string;
+  setTargetAddress: (addr: string) => void;
+  serviceMethod: string;
+  selectedService: string;
+  selectedMethod: string;
+  metadata: string;
+  setMetadata: (metadata: string) => void;
+  metadataEnabled: boolean;
+  setMetadataEnabled: (enabled: boolean) => void;
+}
+
+export const ConfigurationPanel: React.FC<ConfigurationPanelProps> = ({
+  steps, setSteps, onRun, isRunning, targetAddress, setTargetAddress, serviceMethod,
+  selectedService, selectedMethod, metadata, setMetadata, metadataEnabled, setMetadataEnabled
+}) => {
+
+  const addStep = () => {
+    setSteps([...steps, { id: crypto.randomUUID(), c: 10, n: 100, data: '{}' }]);
+  };
+
+  const removeStep = (id: string) => {
+    setSteps(steps.filter(s => s.id !== id));
+  };
+
+  const updateStep = (id: string, field: keyof TestStep, value: any) => {
+    setSteps(steps.map(s => s.id === id ? { ...s, [field]: value } : s));
+  };
+
+  return (
+    <div className="bg-gray-800/50 backdrop-blur-md rounded-xl p-6 border border-gray-700 shadow-xl">
+      <div className="flex justify-between items-center mb-6">
+        <h2 className="text-xl font-bold text-white flex items-center gap-2">
+          <Settings className="w-5 h-5 text-purple-400" /> Configuration
+        </h2>
+        <div className="flex gap-2">
+          <input
+            type="text"
+            value={targetAddress}
+            onChange={(e) => setTargetAddress(e.target.value)}
+            placeholder="localhost:50051"
+            className="bg-gray-900 border border-gray-600 rounded-lg px-3 py-1 text-sm text-white focus:ring-2 focus:ring-purple-500 outline-none"
+          />
+        </div>
+      </div>
+
+      {/* Metadata Section */}
+      <div className="mb-6 bg-gray-900/50 p-4 rounded-lg border border-gray-700">
+        <div className="flex items-center justify-between mb-1">
+          <label className="block text-xs text-gray-400">Metadata (-m)</label>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <span className="text-xs text-gray-400">{metadataEnabled ? 'On' : 'Off'}</span>
+            <input
+              type="checkbox"
+              checked={metadataEnabled}
+              onChange={(e) => setMetadataEnabled(e.target.checked)}
+              className="w-4 h-4 accent-purple-500 cursor-pointer"
+            />
+          </label>
+        </div>
+        {metadataEnabled && (
+          <textarea
+            value={metadata}
+            onChange={(e) => setMetadata(e.target.value)}
+            className="w-full bg-gray-800 border border-gray-600 rounded px-2 py-1 text-white text-xs font-mono h-54"
+            placeholder='{"key": "value"}'
+          />
+        )}
+      </div>
+
+      <div className="space-y-4">
+        {steps.map((step, index) => (
+          <div key={step.id} className="bg-gray-900/50 p-4 rounded-lg border border-gray-700 relative group">
+            <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
+              <button onClick={() => removeStep(step.id)} className="text-red-400 hover:text-red-300">
+                <Trash2 className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-2">
+              <div>
+                <label className="block text-xs text-gray-400 mb-1">Concurrency (-c)</label>
+                <input
+                  type="number"
+                  value={step.c}
+                  onChange={(e) => updateStep(step.id, 'c', parseInt(e.target.value))}
+                  className="w-full bg-gray-800 border border-gray-600 rounded px-2 py-1 text-white text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-400 mb-1">Total Requests (-n)</label>
+                <input
+                  type="number"
+                  value={step.n}
+                  onChange={(e) => updateStep(step.id, 'n', parseInt(e.target.value))}
+                  className="w-full bg-gray-800 border border-gray-600 rounded px-2 py-1 text-white text-sm"
+                />
+              </div>
+              <div className="md:col-span-3">
+                <label className="block text-xs text-gray-400 mb-1">Request Data (JSON)</label>
+                <textarea
+                  value={step.data}
+                  onChange={(e) => updateStep(step.id, 'data', e.target.value)}
+                  className="w-full bg-gray-800 border border-gray-600 rounded px-2 py-1 text-white text-xs font-mono min-h-16 resize-none overflow-hidden"
+                  placeholder='{"key": "value"}'
+                  style={{ height: `${Math.max(64, (step.data.split('\n').length + 1) * 16)}px` }}
+                />
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-6 flex gap-4">
+        <button
+          onClick={addStep}
+          className="flex-1 py-2 border-2 border-dashed border-gray-600 rounded-lg text-gray-400 hover:border-gray-400 hover:text-white transition-colors flex items-center justify-center gap-2"
+        >
+          <Plus className="w-4 h-4" /> Add Step
+        </button>
+
+        <button
+          onClick={onRun}
+          disabled={isRunning || !selectedService || !selectedMethod || steps.length === 0}
+          className={`flex-1 py-2 rounded-lg font-bold text-white flex items-center justify-center gap-2 transition-all
+                ${isRunning || !selectedService || !selectedMethod || steps.length === 0
+              ? 'bg-gray-600 cursor-not-allowed'
+              : 'bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-400 hover:to-emerald-500 shadow-lg hover:shadow-green-500/20'
+            }`}
+        >
+          {isRunning ? (
+            <span className="animate-pulse">Running...</span>
+          ) : (
+            <> <Play className="w-4 h-4" /> Run Load Test </>
+          )}
+        </button>
+      </div>
+    </div>
+  );
+};
