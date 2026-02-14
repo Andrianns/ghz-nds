@@ -1,13 +1,94 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { exec } from 'child_process';
 import fs from 'fs/promises';
 import path from 'path';
 import os from 'os';
-import { promisify } from 'util';
+import * as grpc from '@grpc/grpc-js';
+import * as protoLoader from '@grpc/proto-loader';
 
-const execAsync = promisify(exec);
+// Max duration for Vercel serverless (set to 60s, adjust based on your plan)
+export const maxDuration = 60;
+
+interface CallResult {
+  latency: number; // in nanoseconds
+  error: string | null;
+  statusCode: string;
+}
+
+function hrtimeToNs(hr: [number, number]): number {
+  return hr[0] * 1e9 + hr[1];
+}
+
+function buildHistogram(latencies: number[], bucketCount = 10): { mark: number; count: number; frequency: number }[] {
+  if (latencies.length === 0) return [];
+
+  const sorted = [...latencies].sort((a, b) => a - b);
+  const min = sorted[0];
+  const max = sorted[sorted.length - 1];
+
+  if (min === max) {
+    return [{ mark: min / 1e9, count: latencies.length, frequency: 1 }];
+  }
+
+  const bucketSize = (max - min) / bucketCount;
+  const buckets: { mark: number; count: number }[] = [];
+
+  for (let i = 0; i < bucketCount; i++) {
+    buckets.push({ mark: (min + bucketSize * (i + 1)) / 1e9, count: 0 });
+  }
+
+  for (const lat of latencies) {
+    let idx = Math.floor((lat - min) / bucketSize);
+    if (idx >= bucketCount) idx = bucketCount - 1;
+    buckets[idx].count++;
+  }
+
+  const total = latencies.length;
+  return buckets.map(b => ({ ...b, frequency: b.count / total }));
+}
+
+function buildLatencyDistribution(latencies: number[]): { percentage: number; latency: number }[] {
+  if (latencies.length === 0) return [];
+  const sorted = [...latencies].sort((a, b) => a - b);
+  const percentiles = [10, 25, 50, 75, 90, 95, 99];
+  return percentiles.map(p => {
+    const idx = Math.max(0, Math.ceil((p / 100) * sorted.length) - 1);
+    return { percentage: p, latency: sorted[idx] };
+  });
+}
+
+function makeUnaryCall(
+  client: any,
+  methodName: string,
+  requestData: object,
+  metadataObj: grpc.Metadata
+): Promise<CallResult> {
+  return new Promise((resolve) => {
+    const startTime = process.hrtime();
+
+    client[methodName](requestData, metadataObj, (err: grpc.ServiceError | null, _response: any) => {
+      const elapsed = process.hrtime(startTime);
+      const latencyNs = hrtimeToNs(elapsed);
+
+      if (err) {
+        resolve({
+          latency: latencyNs,
+          error: err.message || err.code?.toString() || 'Unknown error',
+          statusCode: grpc.status[err.code] || `UNKNOWN(${err.code})`,
+        });
+      } else {
+        resolve({
+          latency: latencyNs,
+          error: null,
+          statusCode: 'OK',
+        });
+      }
+    });
+  });
+}
 
 export async function POST(req: NextRequest) {
+  let tempDir: string | null = null;
+
   try {
     const body = await req.json();
     const { protoContent, service, method, address, config, metadata } = body;
@@ -18,143 +99,141 @@ export async function POST(req: NextRequest) {
       if (!service) missing.push('service');
       if (!method) missing.push('method');
       if (!address) missing.push('address');
-      console.error('API Validation Failed. Missing fields:', missing);
       return NextResponse.json({ error: 'Missing required fields', missing }, { status: 400 });
     }
 
-    // Create a temporary directory for the proto file
-    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ghz-'));
+    const concurrency = config?.c || 10;
+    const totalRequests = config?.n || 100;
+    const requestData = config?.data || {};
+
+    // Write proto to temp file for proto-loader
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ghz-'));
     const protoPath = path.join(tempDir, 'service.proto');
+    await fs.writeFile(protoPath, protoContent);
 
-    try {
-      // Write the proto content to the temp file
-      await fs.writeFile(protoPath, protoContent);
+    // Load proto definition
+    const packageDefinition = await protoLoader.load(protoPath, {
+      keepCase: true,
+      longs: String,
+      enums: String,
+      defaults: true,
+      oneofs: true,
+    });
 
-      // Construct the ghz command
-      // config: { c: number, n: number, data: object, ... }
-      const args = [
-        `--proto "${protoPath}"`,
-        `--call "${service}.${method}"`,
-        `-c ${config.c || 10}`,
-        `-n ${config.n || 100}`,
-        `--insecure`, // Assuming localhost uses insecure
-        `--format json`,
-        `"${address}"`
-      ];
+    const proto = grpc.loadPackageDefinition(packageDefinition);
 
-      if (config.data) {
-        // user might pass data as object or string
-        const dataStr = typeof config.data === 'string' ? config.data : JSON.stringify(config.data);
-        // Escape double quotes for shell safety - simple version
-        // For better safety we should write data to a file too or be careful with escaping
-        const dataPath = path.join(tempDir, 'data.json');
-        await fs.writeFile(dataPath, dataStr);
-        args.push(`-d @"${dataPath}"`);
+    // Navigate to the service (e.g. "mypackage.MyService")
+    let ServiceConstructor: any = proto;
+    const serviceParts = service.split('.');
+    for (const part of serviceParts) {
+      ServiceConstructor = ServiceConstructor?.[part];
+    }
+
+    if (!ServiceConstructor) {
+      return NextResponse.json({ error: `Service "${service}" not found in proto definition` }, { status: 400 });
+    }
+
+    // Create client
+    const client = new ServiceConstructor(
+      address,
+      grpc.credentials.createInsecure()
+    );
+
+    // Prepare metadata
+    const grpcMetadata = new grpc.Metadata();
+    if (metadata && typeof metadata === 'object') {
+      for (const [key, value] of Object.entries(metadata)) {
+        grpcMetadata.add(key, String(value));
       }
+    }
 
-      if (metadata && Object.keys(metadata).length > 0) {
-        const metadataStr = typeof metadata === 'string' ? metadata : JSON.stringify(metadata);
-        const metadataPath = path.join(tempDir, 'metadata.json');
-        await fs.writeFile(metadataPath, metadataStr);
-        args.push(`-m @"${metadataPath}"`);
+    // Find the correct method name (case-insensitive match for camelCase)
+    const clientMethods = Object.keys(Object.getPrototypeOf(client)).filter(k => !k.startsWith('$'));
+    const methodName = clientMethods.find(
+      m => m.toLowerCase() === method.toLowerCase()
+    ) || method;
+
+    // Run load test with concurrency
+    const allResults: CallResult[] = [];
+    const overallStart = process.hrtime();
+
+    let completed = 0;
+    const runWorker = async () => {
+      while (completed < totalRequests) {
+        const idx = completed++;
+        if (idx >= totalRequests) break;
+        const result = await makeUnaryCall(client, methodName, requestData, grpcMetadata);
+        allResults.push(result);
       }
+    };
 
+    // Launch concurrent workers
+    const workers = [];
+    for (let i = 0; i < Math.min(concurrency, totalRequests); i++) {
+      workers.push(runWorker());
+    }
+    await Promise.all(workers);
 
-      let ghzPath = 'ghz';
+    const overallElapsed = process.hrtime(overallStart);
+    const totalDurationNs = hrtimeToNs(overallElapsed);
 
-      // Check if ghz is available in PATH
-      try {
-        await execAsync('command -v ghz');
-      } catch (e) {
-        // Not in PATH, check /tmp/ghz
-        const tempGhz = path.join(os.tmpdir(), 'ghz-binary', 'ghz');
-        const tempGhzDir = path.dirname(tempGhz);
+    // Close client
+    client.close();
 
-        try {
-          await fs.access(tempGhz);
-          ghzPath = tempGhz;
-        } catch (e) {
-          // Not in /tmp, download it (Linux only for Vercel)
-          // Note: This assumes Linux environment (Vercel). For local dev without ghz, this might fail on Mac if we download linux binary.
-          // We should detect OS.
-          const platform = os.platform(); // 'darwin', 'linux', 'win32'
-          let downloadUrl = '';
+    // Compute statistics
+    const latencies = allResults.map(r => r.latency);
+    const successLatencies = allResults.filter(r => !r.error).map(r => r.latency);
 
-          if (platform === 'linux') {
-            downloadUrl = 'https://github.com/bojand/ghz/releases/download/v0.120.0/ghz-linux-x86_64.tar.gz';
-          } else if (platform === 'darwin') {
-            const arch = os.arch();
-            if (arch === 'arm64') {
-              downloadUrl = 'https://github.com/bojand/ghz/releases/download/v0.120.0/ghz-darwin-arm64.tar.gz';
-            } else {
-              downloadUrl = 'https://github.com/bojand/ghz/releases/download/v0.120.0/ghz-darwin-x86_64.tar.gz';
-            }
-          }
+    const count = allResults.length;
+    const totalLatencyNs = latencies.reduce((a, b) => a + b, 0);
+    const average = count > 0 ? totalLatencyNs / count : 0;
+    const fastest = count > 0 ? Math.min(...latencies) : 0;
+    const slowest = count > 0 ? Math.max(...latencies) : 0;
+    const rps = totalDurationNs > 0 ? (count / (totalDurationNs / 1e9)) : 0;
 
-          if (downloadUrl) {
-            console.log(`Downloading ghz from ${downloadUrl}...`);
-            await fs.mkdir(tempGhzDir, { recursive: true });
-            await execAsync(`curl -L "${downloadUrl}" | tar xz -C "${tempGhzDir}" ghz`);
-            ghzPath = tempGhz;
-          } else {
-            throw new Error("GHZ binary not found and auto-download not supported for this platform.");
-          }
-        }
+    // Status code distribution
+    const statusCodeDistribution: { [key: string]: number } = {};
+    const errorDist: { [key: string]: number } = {};
+
+    for (const r of allResults) {
+      statusCodeDistribution[r.statusCode] = (statusCodeDistribution[r.statusCode] || 0) + 1;
+      if (r.error) {
+        errorDist[r.error] = (errorDist[r.error] || 0) + 1;
       }
+    }
 
-      // Execute ghz
-      const command = `${ghzPath} ${args.join(' ')}`;
-      console.log('Executing Command:', command);
+    // Build response in ghz-compatible format
+    const result = {
+      date: new Date().toISOString(),
+      count,
+      total: totalDurationNs,
+      average,
+      fastest,
+      slowest,
+      rps,
+      errorDist,
+      statusCodeDistribution,
+      latencyDistribution: buildLatencyDistribution(latencies),
+      histogram: buildHistogram(latencies),
+      details: allResults.map(r => ({
+        latency: r.latency,
+        error: r.error || '',
+        status: r.statusCode,
+      })),
+    };
 
-      try {
-        const { stdout, stderr } = await execAsync(command);
+    return NextResponse.json(result);
 
-        if (stderr) {
-          console.log('GHZ Stderr:', stderr);
-        }
-        if (stdout) {
-          // console.log('GHZ Stdout:', stdout); // potential huge output
-        }
-
-        // Parse the JSON output from ghz
-        let result;
-        try {
-          result = JSON.parse(stdout);
-        } catch (e) {
-          console.error("Failed to parse ghz output:", stdout);
-          return NextResponse.json({
-            error: 'Failed to parse ghz output',
-            raw: stdout,
-            stderr,
-            command
-          }, { status: 500 });
-        }
-
-        return NextResponse.json(result);
-
-      } catch (execError: any) {
-        console.error("GHZ Parsed Error:", execError);
-        // execAsync throws if exit code is not 0
-        return NextResponse.json({
-          error: 'GHZ execution failed',
-          stderr: execError.stderr,
-          stdout: execError.stdout,
-          message: execError.message,
-          command
-        }, { status: 500 });
-      }
-
-    } finally {
-      // Clean up
+  } catch (error: any) {
+    console.error('API Error:', error);
+    return NextResponse.json({ error: error.message || 'Internal Server Error' }, { status: 500 });
+  } finally {
+    if (tempDir) {
       try {
         await fs.rm(tempDir, { recursive: true, force: true });
       } catch (e) {
         console.error('Failed to clean up temp dir:', e);
       }
     }
-
-  } catch (error: any) {
-    console.error('API Error:', error);
-    return NextResponse.json({ error: error.message || 'Internal Server Error' }, { status: 500 });
   }
 }
