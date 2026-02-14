@@ -14,7 +14,7 @@ export default function Home() {
   const [selectedService, setSelectedService] = useState<string>('');
   const [selectedMethod, setSelectedMethod] = useState<string>('');
 
-  const [targetAddress, setTargetAddress] = useState('127.0.0.1:8081');
+  const [targetAddress, setTargetAddress] = useState('host.docker.internal:8081');
   const [metadataEnabled, setMetadataEnabled] = useState(true);
   const [metadata, setMetadata] = useState(JSON.stringify({
     "clientname": "bloomrpc",

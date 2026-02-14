@@ -26,10 +26,28 @@ interface ConfigurationPanelProps {
   hasValidProto: boolean;
 }
 
+const HOST_PRESETS = [
+  { label: 'host.docker.internal', value: 'host.docker.internal' },
+  { label: '127.0.0.1', value: '127.0.0.1' },
+];
+
 export const ConfigurationPanel: React.FC<ConfigurationPanelProps> = ({
   steps, setSteps, onRun, isRunning, targetAddress, setTargetAddress, serviceMethod,
   selectedService, selectedMethod, metadata, setMetadata, metadataEnabled, setMetadataEnabled, hasValidProto
 }) => {
+
+  // Split targetAddress into host and port
+  const colonIdx = targetAddress.lastIndexOf(':');
+  const currentHost = colonIdx > 0 ? targetAddress.substring(0, colonIdx) : targetAddress;
+  const currentPort = colonIdx > 0 ? targetAddress.substring(colonIdx + 1) : '';
+
+  const [isCustomHost, setIsCustomHost] = useState(
+    !HOST_PRESETS.some(p => p.value === currentHost)
+  );
+
+  const updateAddress = (host: string, port: string) => {
+    setTargetAddress(port ? `${host}:${port}` : host);
+  };
 
   const addStep = () => {
     setSteps([...steps, { id: crypto.randomUUID(), c: 10, n: 100, data: '{}' }]);
@@ -49,13 +67,47 @@ export const ConfigurationPanel: React.FC<ConfigurationPanelProps> = ({
         <h2 className="text-xl font-bold text-white flex items-center gap-2">
           <Settings className="w-5 h-5 text-purple-400" /> Configuration
         </h2>
-        <div className="flex gap-2">
+        <div className="flex items-center gap-1">
+          {isCustomHost ? (
+            <input
+              type="text"
+              value={currentHost}
+              onChange={(e) => updateAddress(e.target.value, currentPort)}
+              placeholder="hostname / IP"
+              className="bg-gray-900 border border-gray-600 rounded-lg px-2 py-1 text-sm text-white focus:ring-2 focus:ring-purple-500 outline-none w-44"
+            />
+          ) : (
+            <select
+              value={currentHost}
+              onChange={(e) => updateAddress(e.target.value, currentPort)}
+              className="bg-gray-900 border border-gray-600 rounded-lg px-2 py-1 text-sm text-white focus:ring-2 focus:ring-purple-500 outline-none"
+            >
+              {HOST_PRESETS.map(p => (
+                <option key={p.value} value={p.value}>{p.label}</option>
+              ))}
+            </select>
+          )}
+          <button
+            onClick={() => {
+              setIsCustomHost(!isCustomHost);
+              if (isCustomHost) {
+                updateAddress(HOST_PRESETS[0].value, currentPort);
+              } else {
+                updateAddress('', currentPort);
+              }
+            }}
+            className="text-xs text-purple-400 hover:text-purple-300 whitespace-nowrap"
+            title={isCustomHost ? 'Use preset' : 'Custom host'}
+          >
+            {isCustomHost ? '▼' : '✎'}
+          </button>
+          <span className="text-gray-400 text-sm">:</span>
           <input
             type="text"
-            value={targetAddress}
-            onChange={(e) => setTargetAddress(e.target.value)}
-            placeholder="localhost:50051"
-            className="bg-gray-900 border border-gray-600 rounded-lg px-3 py-1 text-sm text-white focus:ring-2 focus:ring-purple-500 outline-none"
+            value={currentPort}
+            onChange={(e) => updateAddress(currentHost, e.target.value)}
+            placeholder="port"
+            className="bg-gray-900 border border-gray-600 rounded-lg px-2 py-1 text-sm text-white focus:ring-2 focus:ring-purple-500 outline-none w-13"
           />
         </div>
       </div>
