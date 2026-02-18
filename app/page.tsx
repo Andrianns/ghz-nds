@@ -285,6 +285,7 @@ export default function Home() {
               metadataEnabled={metadataEnabled}
               setMetadataEnabled={setMetadataEnabled}
               hasValidProto={services.length > 0}
+              protoContent={protoContent}
             />
 
             {/* Results Section */}

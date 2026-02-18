@@ -1,6 +1,6 @@
 
 import React, { useState } from 'react';
-import { Plus, Trash2, Play, Settings } from 'lucide-react';
+import { Plus, Trash2, Play, Settings, ChevronDown, ChevronRight, Copy, Check, Terminal } from 'lucide-react';
 
 export interface TestStep {
   id: string;
@@ -24,6 +24,7 @@ interface ConfigurationPanelProps {
   metadataEnabled: boolean;
   setMetadataEnabled: (enabled: boolean) => void;
   hasValidProto: boolean;
+  protoContent: string;
 }
 
 const HOST_PRESETS = [
@@ -31,9 +32,58 @@ const HOST_PRESETS = [
   { label: '127.0.0.1', value: '127.0.0.1' },
 ];
 
+// Helper to generate a beautified ghz CLI script
+function buildGhzScript(
+  step: TestStep,
+  targetAddress: string,
+  selectedService: string,
+  selectedMethod: string,
+  metadata: string,
+  metadataEnabled: boolean,
+): string {
+  const lines: string[] = [];
+
+  lines.push('ghz \\');
+  lines.push('--insecure \\');
+
+  // Call target
+  if (selectedService && selectedMethod) {
+    lines.push(`--call ${selectedService}.${selectedMethod} \\`);
+  }
+
+  // Metadata (pretty-printed)
+  if (metadataEnabled && metadata) {
+    try {
+      const parsed = JSON.parse(metadata);
+      const pretty = JSON.stringify(parsed, null, 2);
+      lines.push(`-m '${pretty}' \\`);
+    } catch {
+      // skip invalid metadata
+    }
+  }
+
+  // Data (pretty-printed)
+  try {
+    const parsed = JSON.parse(step.data);
+    const pretty = JSON.stringify(parsed, null, 2);
+    lines.push(`-d '${pretty}' \\`);
+  } catch {
+    lines.push(`-d '${step.data}' \\`);
+  }
+
+  // Concurrency & total
+  lines.push(`-c ${step.c} \\`);
+  lines.push(`-n ${step.n} \\`);
+
+  // Target address
+  lines.push(targetAddress);
+
+  return lines.join('\n');
+}
+
 export const ConfigurationPanel: React.FC<ConfigurationPanelProps> = ({
   steps, setSteps, onRun, isRunning, targetAddress, setTargetAddress, serviceMethod,
-  selectedService, selectedMethod, metadata, setMetadata, metadataEnabled, setMetadataEnabled, hasValidProto
+  selectedService, selectedMethod, metadata, setMetadata, metadataEnabled, setMetadataEnabled, hasValidProto, protoContent
 }) => {
 
   // Split targetAddress into host and port
@@ -44,6 +94,28 @@ export const ConfigurationPanel: React.FC<ConfigurationPanelProps> = ({
   const [isCustomHost, setIsCustomHost] = useState(
     !HOST_PRESETS.some(p => p.value === currentHost)
   );
+
+  // Track script box expanded state
+  const [scriptExpanded, setScriptExpanded] = useState(false);
+  // Track copy success state
+  const [copied, setCopied] = useState(false);
+
+  const copyScript = async (script: string) => {
+    try {
+      await navigator.clipboard.writeText(script);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      const textarea = document.createElement('textarea');
+      textarea.value = script;
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand('copy');
+      document.body.removeChild(textarea);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
 
   const updateAddress = (host: string, port: string) => {
     setTargetAddress(port ? `${host}:${port}` : host);
@@ -60,6 +132,12 @@ export const ConfigurationPanel: React.FC<ConfigurationPanelProps> = ({
   const updateStep = (id: string, field: keyof TestStep, value: any) => {
     setSteps(steps.map(s => s.id === id ? { ...s, [field]: value } : s));
   };
+
+  // Build the combined script from the first step (primary use case)
+  const mainStep = steps[0];
+  const ghzScript = mainStep
+    ? buildGhzScript(mainStep, targetAddress, selectedService, selectedMethod, metadata, metadataEnabled)
+    : '';
 
   return (
     <div className="bg-gray-800/50 backdrop-blur-md rounded-xl p-6 border border-gray-700 shadow-xl">
@@ -111,6 +189,62 @@ export const ConfigurationPanel: React.FC<ConfigurationPanelProps> = ({
           />
         </div>
       </div>
+
+      {/* Full GHZ Script Section (collapsible, above metadata) */}
+      {steps.length > 0 && (
+        <div className="mb-6 bg-gray-900/50 rounded-lg border border-gray-700 overflow-hidden">
+          <button
+            onClick={() => setScriptExpanded(!scriptExpanded)}
+            className="w-full flex items-center justify-between p-4 hover:bg-gray-800/30 transition-colors"
+          >
+            <div className="flex items-center gap-2">
+              <Terminal className="w-4 h-4 text-green-400" />
+              <span className="text-sm font-semibold text-white">Full GHZ Script</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-gray-500">{scriptExpanded ? 'collapse' : 'expand'}</span>
+              {scriptExpanded ? (
+                <ChevronDown className="w-3.5 h-3.5 text-gray-400" />
+              ) : (
+                <ChevronRight className="w-3.5 h-3.5 text-gray-400" />
+              )}
+            </div>
+          </button>
+
+          {scriptExpanded && (
+            <div className="px-4 pb-4">
+              {steps.map((step, index) => {
+                const script = buildGhzScript(step, targetAddress, selectedService, selectedMethod, metadata, metadataEnabled);
+                return (
+                  <div key={step.id} className="relative">
+                    {steps.length > 1 && (
+                      <div className="text-xs text-gray-500 mb-2 font-medium">Step {index + 1}</div>
+                    )}
+                    <button
+                      onClick={() => copyScript(script)}
+                      className={`absolute top-2 right-2 px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-all z-10 ${copied
+                          ? 'bg-green-500/20 text-green-400 border border-green-500/30'
+                          : 'bg-gray-700/80 text-gray-300 hover:bg-gray-600 hover:text-white border border-gray-600'
+                        }`}
+                      title={copied ? 'Copied!' : 'Copy script'}
+                    >
+                      {copied ? (
+                        <><Check className="w-3.5 h-3.5" /> Copied!</>
+                      ) : (
+                        <><Copy className="w-3.5 h-3.5" /> Copy</>
+                      )}
+                    </button>
+                    <pre className="bg-gray-950/90 border border-gray-600/40 rounded-xl p-5 pr-24 text-sm font-mono text-green-300 overflow-x-auto whitespace-pre-wrap leading-relaxed">
+                      {script}
+                    </pre>
+                    {index < steps.length - 1 && <div className="my-3 border-t border-gray-700/50" />}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Metadata Section */}
       <div className="mb-6 bg-gray-900/50 p-4 rounded-lg border border-gray-700">
@@ -207,3 +341,4 @@ export const ConfigurationPanel: React.FC<ConfigurationPanelProps> = ({
     </div>
   );
 };
+
